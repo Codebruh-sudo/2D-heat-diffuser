@@ -146,11 +146,11 @@ Benchmarked on NVIDIA T4 (Google Colab), 1024×1024 grid, 200 time steps.
 
 | Stage | Technique | ms / step | Speedup |
 |-------|-----------|-----------|---------|
-| 1 — Naive | Global memory only | — | 1.00× baseline |
-| 2 — Shared | Shared memory tiling | — | ~X.XX× |
-| 3 — Float4 | 128-bit vectorised loads | — | ~X.XX× |
-| 4 — Occupancy | `__launch_bounds__` tuning | — | ~X.XX× |
-
+| 1 — Naive | Global memory only | — | 1.00× baseline | 
+| 2 — Shared | Shared memory tiling | — | 1.07x|                |
+| 3 — Float4 | 128-bit vectorised loads | — | 1.02× |           |- all of these readings are 
+| 4 — Occupancy | `__launch_bounds__` tuning | — | ~1.09X× |    |   from 128*128 grid as an                                                                         example .                                                                     
+  
 > Run the notebook to fill in your measured values.
 
 Full results in [`benchmarks/optimization_stages.csv`](benchmarks/optimization_stages.csv)
@@ -161,8 +161,6 @@ Full results in [`benchmarks/optimization_stages.csv`](benchmarks/optimization_s
 
 Before writing a single kernel, we profiled the T4 to understand its hardware
 limits. This tells us where to focus our optimisations.
-
-![GPU Diagnostics](assets/gpu_diagnostics.png)
 
 | Metric | Measured | Theoretical |
 |--------|----------|-------------|
@@ -178,10 +176,6 @@ The Roofline model shows whether a kernel is limited by memory bandwidth or
 compute throughput. Our stencil has arithmetic intensity of 0.33 FLOP/byte —
 placing it in the memory-bound region and making shared memory the
 highest-impact optimisation.
-
-![Roofline](assets/roofline.png)
-
----
 
 ## Diffusion Visualisation
 
