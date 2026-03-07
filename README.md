@@ -298,6 +298,5 @@ python src/diffusion_solver.py
 ---
 
 ## Author
-
 Built as part of an HPC / GPU computing portfolio.  
 Targeting scientific computing and GPU programming internships.
