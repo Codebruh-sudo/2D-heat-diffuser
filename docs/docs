@@ -1,11 +1,11 @@
 # Physics — 2D Heat Equation
 
-## Governing Equation
+## Main Equation
 
 The heat (diffusion) equation describes how temperature `u(x,y,t)` evolves
 in a conducting medium with thermal diffusivity `α`.
 
-∂u/∂t = α ∇²u = α ( ∂²u/∂x² + ∂²u/∂y² )
+∂u/∂t = α ∇²u = α ( ∂²u/∂x² + ∂²u/∂y² ) - we are using 2d equation
 
 On a bounded domain `Ω = [0,1] × [0,1]` with:
 
