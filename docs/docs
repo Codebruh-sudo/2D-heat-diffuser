@@ -3,40 +3,37 @@
 ## Governing Equation
 
 The heat (diffusion) equation describes how temperature `u(x,y,t)` evolves
-in a conducting medium with thermal diffusivity `α`:
+in a conducting medium with thermal diffusivity `α`.
 
-```
 ∂u/∂t = α ∇²u = α ( ∂²u/∂x² + ∂²u/∂y² )
-```
 
 On a bounded domain `Ω = [0,1] × [0,1]` with:
 
 - **Initial condition**: Gaussian pulse centred at (0.5, 0.5)
-  ```
+  
   u(x,y,0) = exp( -((x-0.5)² + (y-0.5)²) / σ² )
-  ```
+  
 - **Boundary condition**: Dirichlet, `u = 0` on all four edges
 
----
 
 ## FTCS Discretisation
 
 Using a uniform grid with spacing `Δx = Δy = 1/N` and time step `Δt`:
 
-```
+
 u_new[i,j] = u[i,j]
            + rx * ( u[i][j-1] - 2·u[i][j] + u[i][j+1] )
            + ry * ( u[i-1][j] - 2·u[i][j] + u[i+1][j] )
-```
+
 
 Where the **mesh Fourier numbers** are:
 
-```
+
 rx = α·Δt / Δx²
 ry = α·Δt / Δy²
-```
 
----
+
+
 
 ## Von Neumann Stability Analysis
 
@@ -44,9 +41,9 @@ FTCS is **conditionally stable**. Substituting a Fourier mode
 `u[i,j]^n = g^n · exp(i·k_x·j·Δx) · exp(i·k_y·i·Δy)` into the scheme
 and requiring `|g| ≤ 1` gives:
 
-```
+
 rx + ry ≤ 0.5
-```
+
 
 For uniform spacing `Δx = Δy` and isotropic `α`:
 
