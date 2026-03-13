@@ -13,7 +13,7 @@ Built and benchmarked on a real **NVIDIA T4 GPU** using Google Colab.
 
 Imagine you put a hot object in the centre of a metal plate. Over time the heat
 spreads outward until the whole plate reaches the same temperature. This project
-simulates exactly that process — but on a GPU with up to a million grid points
+simulates exactly that process . but on a GPU with up to a million grid points
 updating simultaneously.
 
 The interesting part is not just making it work, but making it **fast**. We
@@ -76,7 +76,7 @@ fixing a specific problem with the previous one.
 
 Every thread goes directly to GPU main memory (DRAM) to fetch its 5 neighbours.
 The problem: neighbouring threads fetch the same data independently. Thread at
-cell (i,j) and thread at cell (i,j+1) both fetch cell (i,j) from memory — but
+cell (i,j) and thread at cell (i,j+1) both fetch cell (i,j) from memory . but
 they do it separately. Across a 16×16 block, each value gets loaded from DRAM
 roughly 5 times when it only needs to be loaded once.
 
@@ -87,14 +87,14 @@ Thread → DRAM → Thread → DRAM → Thread → DRAM  (slow, wasteful)
 ### Stage 2 — Shared Memory Tiling (the big win)
 
 Before computing anything, each block of 16×16 threads cooperatively loads
-their data — plus a 1-cell border (called a "halo") around the edges — into a
+their data .plus a 1-cell border (called a "halo") around the edges .into a
 tiny ultra-fast on-chip memory called **shared memory**.
 
 All threads → DRAM once → shared memory → compute (fast, efficient)
 
 Shared memory sits physically on the chip next to the CUDA cores. It is roughly
 100× faster to access than DRAM. Once the tile is loaded, all 5 stencil reads
-per thread are served from shared memory — no redundant DRAM traffic.
+per thread are served from shared memory . no redundant DRAM traffic.
 ```
 ┌──────────────────────────────┐
 │  *  │   top halo (18)   │ *  │
@@ -113,7 +113,7 @@ Shared memory allocated: 18×18 = 324 floats per block
 ### Stage 3 — float4 Vectorised Loads
 
 The T4's memory controller moves data in 128-bit chunks natively. A normal
-`float` read moves 32 bits. A `float4` read moves 128 bits — 4 floats at once —
+`float` read moves 32 bits. A `float4` read moves 128 bits 4 floats at once
 in the exact same number of memory instructions.
 
 We restructure each thread to process 4 consecutive grid cells instead of 1,
