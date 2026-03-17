@@ -43,8 +43,8 @@ temperature based on the difference. This is called a 5-point stencil.
 left — centre — right
           |
          down
-
 '''
+
 The update formula for each cell:
 
 
