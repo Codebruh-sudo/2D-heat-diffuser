@@ -2,7 +2,7 @@
 
 # GPU-Accelerated 2D Heat Diffusion Solver
 
-A CUDA project that simulates how heat spreads across a 2D surface — and then
+A CUDA project that simulates how heat spreads across a 2D surface .and then
 optimises the GPU code through 4 stages to make it run as fast as possible.
 
 Built and benchmarked on a real **NVIDIA T4 GPU** using Google Colab.
@@ -36,7 +36,6 @@ material's thermal diffusivity α.*
 We solve this numerically using the **FTCS scheme**  at each time step, every
 grid cell looks at its 4 neighbours (left, right, up, down) and updates its
 temperature based on the difference. This is called a 5-point stencil.
-
 '''
          up
           |
@@ -126,7 +125,7 @@ float4 row = reinterpret_cast<const float4*>(u)[i*(nx/4) + j4/4]
 
 The GPU hides memory latency by rapidly switching between active warps (groups
 of 32 threads). The more warps active simultaneously on each SM (Streaming
-Multiprocessor), the better it can hide latency — this is called **occupancy**.
+Multiprocessor), the better it can hide latency -this is called **occupancy**.
 
 Occupancy is limited by how many registers each thread uses. If threads use too
 many registers, fewer blocks fit on each SM simultaneously. We use
@@ -171,7 +170,7 @@ limits. This tells us where to focus our optimisations.
 ## Roofline Analysis
 
 The Roofline model shows whether a kernel is limited by memory bandwidth or
-compute throughput. Our stencil has arithmetic intensity of 0.33 FLOP/byte —
+compute throughput. Our stencil has arithmetic intensity of 0.33 FLOP/byte -
 placing it in the memory-bound region and making shared memory the
 highest-impact optimisation.
 
@@ -234,21 +233,21 @@ gpu-diffusion-solver/
 
 The two main files are deliberately separate:
 
-- `diffusion_kernels.cu` is **what runs on the GPU** — pure CUDA C++, no Python,
+- `diffusion_kernels.cu` is **what runs on the GPU** - pure CUDA C++, no Python,
 
-- `diffusion_solver.py` is **how it is orchestrated from the CPU** — memory
+- `diffusion_solver.py` is **how it is orchestrated from the CPU** -memory
   allocation, timing, CSV output, visualisation.
 
 ## How to Run It
 
-### Option A — Google Colab (recommended, free T4 GPU)
+### Option A - Google Colab (recommended, free T4 GPU)
 
 1. Open [`notebooks/run_on_colab.ipynb`](notebooks/run_on_colab.ipynb)
 2. Click **"Open in Colab"**
 3. Go to `Runtime → Change runtime type → T4 GPU`
 4. Run all cells (`Ctrl+F9`)
 
-### Option B — Any machine with CUDA
+### Option B - Any machine with CUDA
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/gpu-diffusion-solver.git
