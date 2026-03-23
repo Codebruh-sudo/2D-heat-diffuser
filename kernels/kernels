@@ -19,12 +19,12 @@
  *         kernels/diffusion_kernels.cu
  *
  * Four optimisation stages:
- *   1. diffuse_naive      — global memory baseline
- *   2. diffuse_shared     — shared memory tiling + halo
- *   3. diffuse_float4     — float4 vectorised loads
- *   4. diffuse_occupancy  — __launch_bounds__ occupancy tuning
+ *   1. diffuse_naive      - global memory baseline
+ *   2. diffuse_shared      - shared memory tiling + halo
+ *   3. diffuse_float4       - float4 vectorised loads
+ *   4. diffuse_occupancy  - __launch_bounds__ occupancy tuning
  *
- * All kernels implement identical boundary conditions:
+ * All kernels implement identical boundary conditions-
  *   Dirichlet  u = 0  on all four edges.
  */
 
@@ -32,16 +32,16 @@
 #include <device_launch_parameters.h>
 
 // ═══════════════════════════════════════════════════════════════════
-// Shared-memory tile size — used by kernels 2 and 4
+// Shared-memory tile size - used by kernels 2 and 4
 // ═══════════════════════════════════════════════════════════════════
 #define TILE   16
 #define SMEM   (TILE + 2)   /* tile + 1-cell halo on each side */
 
 // ═══════════════════════════════════════════════════════════════════
-// KERNEL 1 — Naive (global memory only)
+// KERNEL 1 - Naive (global memory only)
 //
 // Every thread independently reads 5 floats from DRAM.
-// No data reuse — each value is loaded ~5 times across the block.
+// No data reuse - each value is loaded ~5 times across the block.
 //
 // Arithmetic intensity:
 //   8 FLOPs (4 adds, 4 mults) / 24 bytes (5R + 1W) = 0.33 FLOP/byte
@@ -249,7 +249,7 @@ __global__ void diffuse_float4(
 //   T4 (SM 7.5) has 65536 registers per SM.
 //   With 256 threads/block and 4 blocks/SM: 65536/(256*4) = 64 regs/thread max.
 //   Without the hint nvcc may use more registers → fewer active blocks
-//   → lower occupancy → less latency hiding.
+//   - lower occupancy - less latency hiding.
 //
 // This is the same shared-memory algorithm as kernel 2, but with
 // the occupancy hint giving the compiler more information to work with.
