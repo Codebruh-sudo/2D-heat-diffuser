@@ -5,7 +5,7 @@
  *
  * PDE:   ∂u/∂t = α ( ∂²u/∂x² + ∂²u/∂y² )
  *
- * Discretisation (5-point stencil, row-major u[i*nx + j]):
+ * Discretisation (5-point stencil, row-major u[i*nx + j]) 
  *
  *   u_new[i,j] = u[i,j]
  *              + rx * ( u[i][j-1] - 2·u[i][j] + u[i][j+1] )   ← x
@@ -179,8 +179,8 @@ __global__ void diffuse_shared(
 // Constraint: nx must be a multiple of 4.
 //
 // Global thread layout:
-//   threadIdx.x + blockIdx.x*blockDim.x  → chunk index (j/4)
-//   threadIdx.y + blockIdx.y*blockDim.y  → row i
+//   threadIdx.x + blockIdx.x*blockDim.x  - chunk index (j/4)
+//   threadIdx.y + blockIdx.y*blockDim.y  - row i
 // ═══════════════════════════════════════════════════════════════════
 __global__ void diffuse_float4(
     const float * __restrict__ u,
@@ -240,12 +240,12 @@ __global__ void diffuse_float4(
 // ═══════════════════════════════════════════════════════════════════
 // KERNEL 4 — Occupancy Tuned with __launch_bounds__
 //
-// __launch_bounds__(maxThreadsPerBlock, minBlocksPerSM) tells nvcc:
+// __launch_bounds__(maxThreadsPerBlock, minBlocksPerSM) tells nvcc -
 //   "This kernel will never use more than maxThreadsPerBlock threads
 //    per block, and you should try to fit at least minBlocksPerSM
 //    blocks simultaneously on each SM."
 //
-// The compiler uses this to budget register allocation:
+// The compiler uses this to budget register allocation -
 //   T4 (SM 7.5) has 65536 registers per SM.
 //   With 256 threads/block and 4 blocks/SM: 65536/(256*4) = 64 regs/thread max.
 //   Without the hint nvcc may use more registers → fewer active blocks
