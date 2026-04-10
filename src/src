@@ -1,6 +1,7 @@
 import subprocess, os
 
 os.makedirs("kernels",     exist_ok=True)
+
 os.makedirs("benchmarks",  exist_ok=True)
 
 result = subprocess.run(["pip", "install", "pycuda", "--quiet"],
@@ -22,12 +23,11 @@ cu_source = r"""
  * Pure CUDA C++ — 2D heat diffusion, 4 optimisation stages.
  * Compiled with nvcc and loaded by PyCUDA at runtime.
  */
+meters.h>
 
-#include <cuda_runtime.h>
-#include <device_launch_parameters.h>
-
-#define TILE  16
-#define SMEM  (TILE + 2)
+#define TILE     16
+#define SMEM     (TILE + 2)
+#define SMEM_PAD (SMEM + 1)     /* +1 padding to eliminate bank conflicts */
 
 /* ----------------------------------------------------------------
  * KERNEL 1 — Naive (global memory baseline)
@@ -41,78 +41,73 @@ __global__ void diffuse_naive(
     const int j = blockIdx.x * blockDim.x + threadIdx.x;
     const int i = blockIdx.y * blockDim.y + threadIdx.y;
 
-    if (i >= ny || j >= nx) return;
+        if (i >= ny || j >= nx) return;
 
+    const int idx = i*nx + j;
+
+    /* if-else instead of early return to keep warp threads converged */
     if (i == 0 || i == ny-1 || j == 0 || j == nx-1) {
-        u_new[i*nx + j] = 0.0f;
-        return;
+        u_new[idx] = 0.0f;
+    } else {
+        const float center = u[idx];
+        const float left   = u[idx - 1];
+        const float right  = u[idx + 1];
+        const float up     = u[(i-1)*nx + j];
+        const float down   = u[(i+1)*nx + j];
+
+        u_new[idx] = center
+                   + rx * (left  - 2.0f*center + right)
+                   + ry * (up    - 2.0f*center + down);
     }
-
-    const int   idx    = i*nx + j;
-    const float center = u[idx];
-    const float left   = u[idx - 1];
-    const float right  = u[idx + 1];
-    const float up     = u[(i-1)*nx + j];
-    const float down   = u[(i+1)*nx + j];
-
-    u_new[idx] = center
-               + rx * (left  - 2.0f*center + right)
-               + ry * (up    - 2.0f*center + down);
 }
 
 /* ----------------------------------------------------------------
- * KERNEL 2 — Shared Memory Tiling
- * Loads (TILE+2)x(TILE+2) tile into __shared__ before computing.
- * Reduces redundant global reads from ~5x to ~1x per element.
+ * KERNEL 2 — Shared Memory Tiling (bank-conflict-free, low divergence)
+ * Padded SMEM_PAD=19 eliminates bank conflicts (gcd(19,32)=1).
+ * Cooperative linear load replaces per-edge if-branches to reduce
+ * warp divergence. Unified write path avoids divergent early returns.
  * ---------------------------------------------------------------- */
 __global__ void diffuse_shared(
     const float * __restrict__ u,
           float * __restrict__ u_new,
     int nx, int ny, float rx, float ry)
 {
-    __shared__ float s[SMEM][SMEM];
+    __shared__ float s[SMEM][SMEM_PAD];
 
     const int gi = blockIdx.y * TILE + threadIdx.y;
     const int gj = blockIdx.x * TILE + threadIdx.x;
     const int li = threadIdx.y + 1;
     const int lj = threadIdx.x + 1;
 
-    /* Load interior */
-    s[li][lj] = (gi < ny && gj < nx) ? u[gi*nx + gj] : 0.0f;
+    const int base_gi = blockIdx.y * TILE - 1;
+    const int base_gj = blockIdx.x * TILE - 1;
+    const int tid     = threadIdx.y * blockDim.x + threadIdx.x;
 
-    /* Load halos */
-    if (threadIdx.y == 0)
-        s[0][lj]      = (gi > 0      && gj < nx) ? u[(gi-1)*nx+gj]  : 0.0f;
-    if (threadIdx.y == TILE-1)
-        s[SMEM-1][lj] = (gi < ny-1   && gj < nx) ? u[(gi+1)*nx+gj]  : 0.0f;
-    if (threadIdx.x == 0)
-        s[li][0]      = (gj > 0      && gi < ny) ? u[gi*nx+gj-1]    : 0.0f;
-    if (threadIdx.x == TILE-1)
-        s[li][SMEM-1] = (gj < nx-1   && gi < ny) ? u[gi*nx+gj+1]    : 0.0f;
-
-    /* Corners */
-    if (threadIdx.y == 0      && threadIdx.x == 0)      s[0][0]           = 0.0f;
-    if (threadIdx.y == 0      && threadIdx.x == TILE-1) s[0][SMEM-1]      = 0.0f;
-    if (threadIdx.y == TILE-1 && threadIdx.x == 0)      s[SMEM-1][0]      = 0.0f;
-    if (threadIdx.y == TILE-1 && threadIdx.x == TILE-1) s[SMEM-1][SMEM-1] = 0.0f;
+    for (int idx = tid; idx < SMEM * SMEM; idx += blockDim.x * blockDim.y) {
+        const int sr = idx / SMEM;
+        const int sc = idx - sr * SMEM;
+        const int gr = base_gi + sr;
+        const int gc = base_gj + sc;
+        s[sr][sc] = (gr >= 0 && gr < ny && gc >= 0 && gc < nx)
+                    ? u[gr * nx + gc] : 0.0f;
+    }
 
     __syncthreads();
 
-    if (gi >= ny || gj >= nx) return;
-    if (gi == 0 || gi == ny-1 || gj == 0 || gj == nx-1) {
-        u_new[gi*nx+gj] = 0.0f;
-        return;
+    if (gi < ny && gj < nx) {
+        float val = 0.0f;
+        if (gi > 0 && gi < ny-1 && gj > 0 && gj < nx-1) {
+            const float center = s[li  ][lj  ];
+            const float left   = s[li  ][lj-1];
+            const float right  = s[li  ][lj+1];
+            const float up     = s[li-1][lj  ];
+            const float down   = s[li+1][lj  ];
+            val = center
+                + rx * (left  - 2.0f*center + right)
+                + ry * (up    - 2.0f*center + down);
+        }
+        u_new[gi*nx+gj] = val;
     }
-
-    const float center = s[li  ][lj  ];
-    const float left   = s[li  ][lj-1];
-    const float right  = s[li  ][lj+1];
-    const float up     = s[li-1][lj  ];
-    const float down   = s[li+1][lj  ];
-
-    u_new[gi*nx+gj] = center
-        + rx * (left  - 2.0f*center + right)
-        + ry * (up    - 2.0f*center + down);
 }
 
 /* ----------------------------------------------------------------
@@ -162,13 +157,9 @@ __global__ void diffuse_float4(
 }
 
 /* ----------------------------------------------------------------
- * KERNEL 4 — Occupancy Tuned
- * __launch_bounds__(maxTPB, minBPSM) hints to nvcc to limit
- * register use so more blocks fit simultaneously on each SM,
- * increasing occupancy and improving latency hiding.
- *
- * T4 (SM 7.5): 65536 regs/SM
- *   256 threads/block × 4 blocks/SM → 64 regs/thread max budget
+ * KERNEL 4 — Occupancy Tuned (same fixes as kernel 2 + launch_bounds)
+ * Padded SMEM, cooperative load, unified write path, plus
+ * __launch_bounds__(256, 4) to cap register use at 64/thread.
  * ---------------------------------------------------------------- */
 __global__
 __launch_bounds__(256, 4)
@@ -177,47 +168,44 @@ void diffuse_occupancy(
           float * __restrict__ u_new,
     int nx, int ny, float rx, float ry)
 {
-    __shared__ float s[SMEM][SMEM];
+    __shared__ float s[SMEM][SMEM_PAD];
 
     const int gi = blockIdx.y * TILE + threadIdx.y;
     const int gj = blockIdx.x * TILE + threadIdx.x;
     const int li = threadIdx.y + 1;
     const int lj = threadIdx.x + 1;
 
-    s[li][lj] = (gi < ny && gj < nx) ? u[gi*nx + gj] : 0.0f;
+    const int base_gi = blockIdx.y * TILE - 1;
+    const int base_gj = blockIdx.x * TILE - 1;
+    const int tid     = threadIdx.y * blockDim.x + threadIdx.x;
 
-    if (threadIdx.y == 0)
-        s[0][lj]      = (gi > 0      && gj < nx) ? u[(gi-1)*nx+gj]  : 0.0f;
-    if (threadIdx.y == TILE-1)
-        s[SMEM-1][lj] = (gi < ny-1   && gj < nx) ? u[(gi+1)*nx+gj]  : 0.0f;
-    if (threadIdx.x == 0)
-        s[li][0]      = (gj > 0      && gi < ny) ? u[gi*nx+gj-1]    : 0.0f;
-    if (threadIdx.x == TILE-1)
-        s[li][SMEM-1] = (gj < nx-1   && gi < ny) ? u[gi*nx+gj+1]    : 0.0f;
-
-    if (threadIdx.y == 0      && threadIdx.x == 0)      s[0][0]           = 0.0f;
-    if (threadIdx.y == 0      && threadIdx.x == TILE-1) s[0][SMEM-1]      = 0.0f;
-    if (threadIdx.y == TILE-1 && threadIdx.x == 0)      s[SMEM-1][0]      = 0.0f;
-    if (threadIdx.y == TILE-1 && threadIdx.x == TILE-1) s[SMEM-1][SMEM-1] = 0.0f;
+    for (int idx = tid; idx < SMEM * SMEM; idx += blockDim.x * blockDim.y) {
+        const int sr = idx / SMEM;
+        const int sc = idx - sr * SMEM;
+        const int gr = base_gi + sr;
+        const int gc = base_gj + sc;
+        s[sr][sc] = (gr >= 0 && gr < ny && gc >= 0 && gc < nx)
+                    ? u[gr * nx + gc] : 0.0f;
+    }
 
     __syncthreads();
 
-    if (gi >= ny || gj >= nx) return;
-    if (gi == 0 || gi == ny-1 || gj == 0 || gj == nx-1) {
-        u_new[gi*nx+gj] = 0.0f;
-        return;
+    if (gi < ny && gj < nx) {
+        float val = 0.0f;
+        if (gi > 0 && gi < ny-1 && gj > 0 && gj < nx-1) {
+            const float center = s[li  ][lj  ];
+            const float left   = s[li  ][lj-1];
+            const float right  = s[li  ][lj+1];
+            const float up     = s[li-1][lj  ];
+            const float down   = s[li+1][lj  ];
+            val = center
+                + rx * (left  - 2.0f*center + right)
+                + ry * (up    - 2.0f*center + down);
+        }
+        u_new[gi*nx+gj] = val;
     }
-
-    const float center = s[li  ][lj  ];
-    const float left   = s[li  ][lj-1];
-    const float right  = s[li  ][lj+1];
-    const float up     = s[li-1][lj  ];
-    const float down   = s[li+1][lj  ];
-
-    u_new[gi*nx+gj] = center
-        + rx * (left  - 2.0f*center + right)
-        + ry * (up    - 2.0f*center + down);
 }
+
 """
 
 # Write .cu file to disk
@@ -645,4 +633,3 @@ print("  • benchmarks/diffusion_snapshots.png")
 print("  • kernels/diffusion_kernels.cu   ← the pure CUDA source")
 print("=" * 62)
 print("\n  ✓ Complete. Ready to build Navier-Stokes on top of this.")
-
