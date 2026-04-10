@@ -1,7 +1,6 @@
 import subprocess, os
 
 os.makedirs("kernels",     exist_ok=True)
-
 os.makedirs("benchmarks",  exist_ok=True)
 
 result = subprocess.run(["pip", "install", "pycuda", "--quiet"],
