@@ -34,8 +34,10 @@
 // ═══════════════════════════════════════════════════════════════════
 // Shared-memory tile size - used by kernels 2 and 4
 // ═══════════════════════════════════════════════════════════════════
-#define TILE   16
-#define SMEM   (TILE + 2)   /* tile + 1-cell halo on each side */
+#define TILE     16
+#define SMEM     (TILE + 2)     /* tile + 1-cell halo on each side */
+#define SMEM_PAD (SMEM + 1)     /* +1 column padding to eliminate bank conflicts
+                                   stride 19: gcd(19,32)=1 → 0 bank conflicts */
 
 // ═══════════════════════════════════════════════════════════════════
 // KERNEL 1 - Naive (global memory only)
@@ -62,48 +64,42 @@ __global__ void diffuse_naive(
     /* Bounds guard — must come before any memory access */
     if (i >= ny || j >= nx) return;
 
-    /* Dirichlet BC: u = 0 on all four edges */
-    if (i == 0 || i == ny - 1 || j == 0 || j == nx - 1) {
-        u_new[i * nx + j] = 0.0f;
-        return;
-    }
-
     const int idx = i * nx + j;
 
-    const float center = u[idx];
-    const float left   = u[idx - 1];           /* u[i  ][j-1] */
-    const float right  = u[idx + 1];           /* u[i  ][j+1] */
-    const float up     = u[(i - 1) * nx + j];  /* u[i-1][j  ] */
-    const float down   = u[(i + 1) * nx + j];  /* u[i+1][j  ] */
+    /* Use if-else instead of early return to keep warp threads converged.
+       Early returns cause divergence: boundary threads exit while interior
+       threads in the same warp continue, serialising execution. */
+    if (i == 0 || i == ny - 1 || j == 0 || j == nx - 1) {
+        u_new[idx] = 0.0f;
+    } else {
+        const float center = u[idx];
+        const float left   = u[idx - 1];           /* u[i  ][j-1] */
+        const float right  = u[idx + 1];           /* u[i  ][j+1] */
+        const float up     = u[(i - 1) * nx + j];  /* u[i-1][j  ] */
+        const float down   = u[(i + 1) * nx + j];  /* u[i+1][j  ] */
 
-    u_new[idx] = center
-               + rx * (left  - 2.0f * center + right)
-               + ry * (up    - 2.0f * center + down);
+        u_new[idx] = center
+                   + rx * (left  - 2.0f * center + right)
+                   + ry * (up    - 2.0f * center + down);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// KERNEL 2 — Shared Memory Tiling
+// KERNEL 2 — Shared Memory Tiling (bank-conflict-free, low divergence)
 //
-// Each block cooperatively loads a (TILE+2)×(TILE+2) tile
-// (interior + 1-cell halo) into on-chip shared memory before
-// computing the stencil. Neighbours are served from L1/shared
-// instead of DRAM.
+// Optimisations over the naive approach:
+//   1. Shared memory tiling — neighbours served from on-chip SRAM
+//   2. Padded column dimension (SMEM_PAD = 19) eliminates bank
+//      conflicts. Original stride 18: gcd(18,32)=2 → 2-way conflicts.
+//      Padded stride 19: gcd(19,32)=1 → 0 conflicts.
+//   3. Cooperative linear tile load — ALL 256 threads participate in
+//      loading the full 18×18 halo tile, replacing the old per-edge
+//      if-branches (threadIdx.x==0, etc.) that caused warp divergence
+//      in every warp (only 1-2 threads active per branch).
+//   4. Unified write path — boundary threads write 0 via if-else
+//      instead of early return, keeping warps converged.
 //
-// Memory layout of shared tile s[SMEM][SMEM]:
-//
-//   s[0   ][1..TILE]   ← top    halo  (loaded by threadIdx.y == 0)
-//   s[1..TILE][0   ]   ← left   halo  (loaded by threadIdx.x == 0)
-//   s[1..TILE][SMEM-1] ← right  halo  (loaded by threadIdx.x == TILE-1)
-//   s[SMEM-1][1..TILE] ← bottom halo  (loaded by threadIdx.y == TILE-1)
-//   s[1..TILE][1..TILE]← interior tile (all threads)
-//
-// Shared memory per block: SMEM*SMEM*4 = 18*18*4 = 1296 bytes
-//   (well within the 48 KB per-block limit on T4)
-//
-// Why this helps on T4 (your results showed compute-bound stencil):
-//   Shared memory reduces redundant DRAM fetches, freeing the
-//   memory controller and improving L1 hit rate, which reduces
-//   the number of stalls in the warp scheduler.
+// Shared memory per block: SMEM*SMEM_PAD*4 = 18*19*4 = 1368 bytes
 // ═══════════════════════════════════════════════════════════════════
 __global__ void diffuse_shared(
     const float * __restrict__ u,
@@ -113,7 +109,7 @@ __global__ void diffuse_shared(
     float rx,
     float ry)
 {
-    __shared__ float s[SMEM][SMEM];
+    __shared__ float s[SMEM][SMEM_PAD];   /* padded to eliminate bank conflicts */
 
     /* Global indices */
     const int gi = blockIdx.y * TILE + threadIdx.y;
@@ -123,48 +119,46 @@ __global__ void diffuse_shared(
     const int li = threadIdx.y + 1;
     const int lj = threadIdx.x + 1;
 
-    /* ── Load interior ─────────────────────────────────────────── */
-    s[li][lj] = (gi < ny && gj < nx) ? u[gi * nx + gj] : 0.0f;
+    /* ── Cooperative tile load ─────────────────────────────────────
+       All 256 threads load the full 18×18 halo tile linearly.
+       This replaces per-edge if-branches that caused warp divergence
+       (threadIdx.x==0 / ==TILE-1 meant only 1-2 threads per warp
+       were active, serialising the other 30-31).
+       With 324 elements and 256 threads: 2 iterations, divergence
+       only in 1 warp on the second pass (68 active) vs. the old
+       approach with divergence in ALL 8 warps.
+       ────────────────────────────────────────────────────────────── */
+    const int base_gi = blockIdx.y * TILE - 1;
+    const int base_gj = blockIdx.x * TILE - 1;
+    const int tid     = threadIdx.y * blockDim.x + threadIdx.x;
 
-    /* ── Load halos ────────────────────────────────────────────── */
-    if (threadIdx.y == 0)
-        s[0][lj]         = (gi > 0      && gj < nx) ? u[(gi-1)*nx + gj] : 0.0f;
-    if (threadIdx.y == TILE - 1)
-        s[SMEM-1][lj]    = (gi < ny - 1 && gj < nx) ? u[(gi+1)*nx + gj] : 0.0f;
-    if (threadIdx.x == 0)
-        s[li][0]         = (gj > 0      && gi < ny) ? u[gi*nx + gj - 1] : 0.0f;
-    if (threadIdx.x == TILE - 1)
-        s[li][SMEM-1]    = (gj < nx - 1 && gi < ny) ? u[gi*nx + gj + 1] : 0.0f;
-
-    /* ── Initialise corners (never read, prevents uninitialised UB) */
-    if (threadIdx.y == 0      && threadIdx.x == 0)
-        s[0][0]               = 0.0f;
-    if (threadIdx.y == 0      && threadIdx.x == TILE - 1)
-        s[0][SMEM-1]          = 0.0f;
-    if (threadIdx.y == TILE-1 && threadIdx.x == 0)
-        s[SMEM-1][0]          = 0.0f;
-    if (threadIdx.y == TILE-1 && threadIdx.x == TILE - 1)
-        s[SMEM-1][SMEM-1]     = 0.0f;
+    for (int idx = tid; idx < SMEM * SMEM; idx += blockDim.x * blockDim.y) {
+        const int sr = idx / SMEM;
+        const int sc = idx - sr * SMEM;
+        const int gr = base_gi + sr;
+        const int gc = base_gj + sc;
+        s[sr][sc] = (gr >= 0 && gr < ny && gc >= 0 && gc < nx)
+                    ? u[gr * nx + gc] : 0.0f;
+    }
 
     /* ── Sync: all loads must finish before any reads ──────────── */
     __syncthreads();
 
-    /* ── Bounds + boundary (after syncthreads) ─────────────────── */
-    if (gi >= ny || gj >= nx) return;
-    if (gi == 0 || gi == ny-1 || gj == 0 || gj == nx-1) {
-        u_new[gi * nx + gj] = 0.0f;
-        return;
+    /* ── Unified write path: avoids divergent early returns ─────── */
+    if (gi < ny && gj < nx) {
+        float val = 0.0f;
+        if (gi > 0 && gi < ny - 1 && gj > 0 && gj < nx - 1) {
+            const float center = s[li  ][lj  ];
+            const float left   = s[li  ][lj-1];
+            const float right  = s[li  ][lj+1];
+            const float up     = s[li-1][lj  ];
+            const float down   = s[li+1][lj  ];
+            val = center
+                + rx * (left  - 2.0f * center + right)
+                + ry * (up    - 2.0f * center + down);
+        }
+        u_new[gi * nx + gj] = val;
     }
-
-    const float center = s[li  ][lj  ];
-    const float left   = s[li  ][lj-1];
-    const float right  = s[li  ][lj+1];
-    const float up     = s[li-1][lj  ];
-    const float down   = s[li+1][lj  ];
-
-    u_new[gi * nx + gj] = center
-        + rx * (left  - 2.0f * center + right)
-        + ry * (up    - 2.0f * center + down);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -240,19 +234,14 @@ __global__ void diffuse_float4(
 // ═══════════════════════════════════════════════════════════════════
 // KERNEL 4 — Occupancy Tuned with __launch_bounds__
 //
-// __launch_bounds__(maxThreadsPerBlock, minBlocksPerSM) tells nvcc -
-//   "This kernel will never use more than maxThreadsPerBlock threads
-//    per block, and you should try to fit at least minBlocksPerSM
-//    blocks simultaneously on each SM."
+// Same optimised shared-memory algorithm as kernel 2 (padded SMEM,
+// cooperative loading, unified write path), plus:
 //
-// The compiler uses this to budget register allocation -
+// __launch_bounds__(256, 4) tells nvcc to budget register allocation:
 //   T4 (SM 7.5) has 65536 registers per SM.
-//   With 256 threads/block and 4 blocks/SM: 65536/(256*4) = 64 regs/thread max.
-//   Without the hint nvcc may use more registers → fewer active blocks
-//   - lower occupancy - less latency hiding.
-//
-// This is the same shared-memory algorithm as kernel 2, but with
-// the occupancy hint giving the compiler more information to work with.
+//   256 threads/block × 4 blocks/SM → 64 regs/thread max budget.
+//   Without the hint nvcc may spill to more registers → fewer active
+//   blocks → lower occupancy → less latency hiding.
 // ═══════════════════════════════════════════════════════════════════
 __global__
 __launch_bounds__(256, 4)   /* max 256 threads/block, aim ≥ 4 blocks/SM */
@@ -264,49 +253,42 @@ void diffuse_occupancy(
     float rx,
     float ry)
 {
-    __shared__ float s[SMEM][SMEM];
+    __shared__ float s[SMEM][SMEM_PAD];   /* padded to eliminate bank conflicts */
 
     const int gi = blockIdx.y * TILE + threadIdx.y;
     const int gj = blockIdx.x * TILE + threadIdx.x;
     const int li = threadIdx.y + 1;
     const int lj = threadIdx.x + 1;
 
-    s[li][lj] = (gi < ny && gj < nx) ? u[gi * nx + gj] : 0.0f;
+    /* ── Cooperative tile load (same as kernel 2) ──────────────── */
+    const int base_gi = blockIdx.y * TILE - 1;
+    const int base_gj = blockIdx.x * TILE - 1;
+    const int tid     = threadIdx.y * blockDim.x + threadIdx.x;
 
-    if (threadIdx.y == 0)
-        s[0][lj]         = (gi > 0      && gj < nx) ? u[(gi-1)*nx + gj] : 0.0f;
-    if (threadIdx.y == TILE - 1)
-        s[SMEM-1][lj]    = (gi < ny - 1 && gj < nx) ? u[(gi+1)*nx + gj] : 0.0f;
-    if (threadIdx.x == 0)
-        s[li][0]         = (gj > 0      && gi < ny) ? u[gi*nx + gj - 1] : 0.0f;
-    if (threadIdx.x == TILE - 1)
-        s[li][SMEM-1]    = (gj < nx - 1 && gi < ny) ? u[gi*nx + gj + 1] : 0.0f;
-
-    if (threadIdx.y == 0      && threadIdx.x == 0)
-        s[0][0]               = 0.0f;
-    if (threadIdx.y == 0      && threadIdx.x == TILE - 1)
-        s[0][SMEM-1]          = 0.0f;
-    if (threadIdx.y == TILE-1 && threadIdx.x == 0)
-        s[SMEM-1][0]          = 0.0f;
-    if (threadIdx.y == TILE-1 && threadIdx.x == TILE - 1)
-        s[SMEM-1][SMEM-1]     = 0.0f;
+    for (int idx = tid; idx < SMEM * SMEM; idx += blockDim.x * blockDim.y) {
+        const int sr = idx / SMEM;
+        const int sc = idx - sr * SMEM;
+        const int gr = base_gi + sr;
+        const int gc = base_gj + sc;
+        s[sr][sc] = (gr >= 0 && gr < ny && gc >= 0 && gc < nx)
+                    ? u[gr * nx + gc] : 0.0f;
+    }
 
     __syncthreads();
 
-    if (gi >= ny || gj >= nx) return;
-    if (gi == 0 || gi == ny-1 || gj == 0 || gj == nx-1) {
-        u_new[gi * nx + gj] = 0.0f;
-        return;
+    /* ── Unified write path ────────────────────────────────────── */
+    if (gi < ny && gj < nx) {
+        float val = 0.0f;
+        if (gi > 0 && gi < ny - 1 && gj > 0 && gj < nx - 1) {
+            const float center = s[li  ][lj  ];
+            const float left   = s[li  ][lj-1];
+            const float right  = s[li  ][lj+1];
+            const float up     = s[li-1][lj  ];
+            const float down   = s[li+1][lj  ];
+            val = center
+                + rx * (left  - 2.0f * center + right)
+                + ry * (up    - 2.0f * center + down);
+        }
+        u_new[gi * nx + gj] = val;
     }
-
-    const float center = s[li  ][lj  ];
-    const float left   = s[li  ][lj-1];
-    const float right  = s[li  ][lj+1];
-    const float up     = s[li-1][lj  ];
-    const float down   = s[li+1][lj  ];
-
-    u_new[gi * nx + gj] = center
-        + rx * (left  - 2.0f * center + right)
-        + ry * (up    - 2.0f * center + down);
 }
-
