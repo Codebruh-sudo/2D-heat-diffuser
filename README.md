@@ -202,7 +202,7 @@ ii)  [performance]  <p align="center">
 ## Project Structure
 
 ```
-2d heat diffuser/
+2D-heat-diffuser/
 │
 ├── README.md
 │
