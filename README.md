@@ -206,9 +206,11 @@ ii)  [performance]  <p align="center">
 │
 ├── README.md
 │
-├── kernels/        ← all 4 CUDA kernels,  C++
+├── kernels/
+|       |___ kernels        ← all 4 CUDA kernels,  C++
 │
-├── src/       ← Python: timing, benchmarking, plotting
+├── src/
+    |__src          ← Python: timing, benchmarking, plotting
 │
 ├── notebooks/
 │   └── run_on_colab.ipynb           ← click to run on free T4 GPU
