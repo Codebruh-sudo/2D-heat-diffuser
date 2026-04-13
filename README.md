@@ -251,7 +251,7 @@ The two main files are deliberately separate:
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/gpu-diffusion-solver.git
-cd gpu-diffusion-solver
+cd src
 pip install pycuda matplotlib numpy
 python src/diffusion_solver.py
 ```
