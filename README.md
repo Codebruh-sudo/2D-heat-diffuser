@@ -202,20 +202,18 @@ ii)  [performance]  <p align="center">
 ## Project Structure
 
 ```
-gpu-diffusion-solver/
+2d heat diffuser/
 │
 ├── README.md
 │
-├── kernels/
-│   └── diffusion_kernels.cu         ← all 4 CUDA kernels,  C++
+├── kernels/        ← all 4 CUDA kernels,  C++
 │
-├── src/
-│   └── diffusion_solver.py          ← Python: timing, benchmarking, plotting
+├── src/       ← Python: timing, benchmarking, plotting
 │
 ├── notebooks/
 │   └── run_on_colab.ipynb           ← click to run on free T4 GPU
 │
-├── images
+├── images/
 │   |____ diffusion_snapshots.png     ←  contains snapshots
 │   |___ benchmark
 │        |___optimization stages.csv.png
