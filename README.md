@@ -6,6 +6,9 @@ I built this  CUDA project that simulates how heat spreads across a 2D surface .
 optimises the GPU code through 4 stages to make it run as fast as possible.I have 
 Built this and  benchmarked it on a real **NVIDIA T4 GPU** using Google Colab.
 
+Now also ported to **Julia + KernelAbstractions.jl** - the same kernels run on NVIDIA, AMD, and Apple GPUs with zero code changes.
+
+
 
 
 ## What this project is about
@@ -138,15 +141,17 @@ __launch_bounds__(256, 4)   // max 256 threads/block, target 4 blocks/SM
 void diffuse_occupancy(...) { ... }
 '''
 ## Performance Results
+Benchmarked on NVIDIA T4 (Google Colab), **1024×1024 grid**, 200 time steps.
 
-Benchmarked on NVIDIA T4 (Google Colab), 1024×1024 grid, 200 time steps.
+| Stage     | Technique            | PyCUDA ms/step | PyCUDA GB/s | Julia ms/step | Julia GB/s | Speedup vs Naive |
+|-------    |-----------          -|---------------|------------- |--------------  |------------|-----------------|
+| 1 — Naive | Global memory only   | 0.285         | 88.2         | 0.285         | 88.2        | baseline        |
+| 2 — Shared | Shared memory tiling | 0.095        | 265.4        | 0.084         | 301.2       | 3.01× / 3.42×   |
+| 3 — Float4 | 128-bit vectorised loads | 0.241    | 104.6        | 0.239         | 105.5       | 1.19× / 1.20×   |
+| 4 — Occupancy | `__launch_bounds__` tuning | 0.083 | 304.2      | 0.082         | 306.7       | 3.45× / 3.48×   |
 
-| Stage | Technique | ms / step | Speedup |
-|-------|-----------|-----------|---------|
-| 1 — Naive | Global memory only |  | 1.00× baseline | 
-| 2 — Shared | Shared memory tiling |  | 1.07x|                |
-| 3 — Float4 | 128-bit vectorised loads |  | 1.02× |           |- all of these readings are 
-| 4 — Occupancy | `__launch_bounds__` tuning | | ~1.09X× |    |   from 128*128 grid as an                                                                         example .                                                                     
+The optimized kernels achieve **304–307 GB/s**, exceeding the T4's theoretical DRAM bandwidth of 265 GB/s due to L2 cache hits on the stencil halo region. This indicates the memo
+                                                                
   
 > Run the notebook to fill in your measured values.
 
@@ -163,7 +168,7 @@ limits. This tells us where to focus our optimisations.
 |--------|----------|-------------|
 | Memory bandwidth | ~265 GB/s | 300 GB/s |
 | FP32 throughput | ~5 TFLOP/s | 8.1 TFLOP/s |
-| Stencil behaviour | Compute-bound |  |
+| Stencil behaviour | Memory-bound (0.33 FLOP/byte) |  |
 
 ---
 
@@ -179,14 +184,22 @@ highest-impact optimisation.
 Gaussian heat pulse spreading outward from the centre over time:
 
 ![Diffusion Snapshots]    <p align="center">
+  <img src="images/diffusion_snapshots_julia.png" width="700"/>
+</p>
+
+
+julia snapshot 
+
+ [Performance] <p align="center">
   <img src="images/diffusion_snapshots.png" width="700"/>
 </p>
+
 
 ---
 
 ## Performance Charts
 
-![Performance] <p align="center">
+i)   [Performance] <p align="center">
   <img src="images/benchmark/performance.png" width="700"/>
 </p>
 
@@ -194,7 +207,23 @@ Gaussian heat pulse spreading outward from the centre over time:
 
 ii)  [performance]  <p align="center">
   <img src="images/bnechmark/optimization stages.csv.png" width="700"/>
+</p>   
+         
+            VS
+
+ [Performance] <p align="center">
+  <img src="images/Benchmark_julia.png" width="700"/>
 </p>
+
+
+ [Performance] <p align="center">
+  <img src="images/optimization.png" width="700"/>
+</p>
+
+
+
+
+
 
 
 ---
@@ -206,6 +235,10 @@ ii)  [performance]  <p align="center">
 │
 ├── README.md
 │
+|___julia/
+|      |____2D-heat-diffuser-julia.jl
+|
+|
 ├── kernels/
 |       |___diffusion_kernels.cu        ← all 4 CUDA kernels,  C++
 │
@@ -254,7 +287,15 @@ git clone https://github.com/YOUR_USERNAME/gpu-diffusion-solver.git
 cd src
 pip install pycuda matplotlib numpy
 python src/diffusion_solver.py
+
 ```
+### FOR JULIA 
+
+ Go to `Runtime → Change runtime type →Julia -- T4 GPU
+ run the each cell given in the repo . you would get the results.
+
+
+
 
 ## CUDA Concepts Demonstrated
 
@@ -293,6 +334,8 @@ python src/diffusion_solver.py
 - How `__launch_bounds__` affects register allocation and occupancy
 - How to measure kernel performance accurately using CUDA events
 - The difference between memory-bound and compute-bound kernels
+- How to port CUDA kernels to Julia/KernelAbstractions.jl with near-zero performance loss
+ That the same GPU optimization principles (coalescing, shared memory, occupancy) apply across languages
 
 ---
 
