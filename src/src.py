@@ -22,8 +22,8 @@ cu_source = r"""
  * Pure CUDA C++ — 2D heat diffusion, 4 optimisation stages.
  * Compiled with nvcc and loaded by PyCUDA at runtime.
  */
-meters.h>
-
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
 #define TILE     16
 #define SMEM     (TILE + 2)
 #define SMEM_PAD (SMEM + 1)     /* +1 padding to eliminate bank conflicts */
