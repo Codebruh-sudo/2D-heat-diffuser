@@ -143,15 +143,13 @@ void diffuse_occupancy(...) { ... }
 ## Performance Results
 Benchmarked on NVIDIA T4 (Google Colab), **1024×1024 grid**, 200 time steps.
 
-| Stage     | Technique            | PyCUDA ms/step | PyCUDA GB/s | Julia ms/step | Julia GB/s | Speedup vs Naive |
-|-------    |-----------          -|---------------|------------- |--------------  |------------|-----------------|
-| 1 — Naive | Global memory only   | 0.285         | 88.2         | 0.285         | 88.2        | baseline        |
-| 2 — Shared | Shared memory tiling | 0.095        | 265.4        | 0.084         | 301.2       | 3.01× / 3.42×   |
-| 3 — Float4 | 128-bit vectorised loads | 0.241    | 104.6        | 0.239         | 105.5       | 1.19× / 1.20×   |
-| 4 — Occupancy | `__launch_bounds__` tuning | 0.083 | 304.2      | 0.082         | 306.7       | 3.45× / 3.48×   |
 
-The optimized kernels achieve **304–307 GB/s**, exceeding the T4's theoretical DRAM bandwidth of 265 GB/s due to L2 cache hits on the stencil halo region. This indicates the memo
-                                                                
+
+The optimized kernels achieve **304–307 GB/s**, exceeding the T4's theoretical DRAM bandwidth of 265 GB/s due to L2 cache hits on the stencil halo region. This indicates the memo  
+
+  [Performance] <p align="center">
+  <img src="images/benchmarked.png" width="700"/>
+</p>                                                              
   
 > Run the notebook to fill in your measured values.
 
@@ -184,14 +182,14 @@ highest-impact optimisation.
 Gaussian heat pulse spreading outward from the centre over time:
 
 ![Diffusion Snapshots]    <p align="center">
-  <img src="images/diffusion_snapshots_julia.png" width="700"/>
+  <img src="images/diffusion_snapshots.png" width="700"/>
 </p>
 
 
 julia snapshot 
 
  [Performance] <p align="center">
-  <img src="images/diffusion_snapshots.png" width="700"/>
+  <img src="images/diffusion_snapshots_julia.png" width="700"/>
 </p>
 
 
