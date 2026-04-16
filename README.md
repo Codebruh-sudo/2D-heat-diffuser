@@ -147,8 +147,10 @@ Benchmarked on NVIDIA T4 (Google Colab), **1024×1024 grid**, 200 time steps.
 
 The optimized kernels achieve **304–307 GB/s**, exceeding the T4's theoretical DRAM bandwidth of 265 GB/s due to L2 cache hits on the stencil halo region. This indicates the memo  
 
-  [Performance] <p align="center">
-  <img src="images/benchmarked.png" width="700"/>
+  [Performance] 
+  
+  <p align="center">
+  <img src="images/performance_speedup.png" width="700"/>
 </p>                                                              
   
 > Run the notebook to fill in your measured values.
