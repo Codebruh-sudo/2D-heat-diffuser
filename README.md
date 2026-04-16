@@ -340,4 +340,4 @@ python src/diffusion_solver.py
 ---
 
 ## Author
- i have Builththis as a part of an HPC / GPU computing portfolio.  
+ i have Built this as a part of an HPC / GPU computing portfolio.  
